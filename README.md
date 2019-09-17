@@ -20,6 +20,6 @@ Art sources are drawn by myself. Font source is the base-code source. Clonk soun
 
 Note:
 
-There is an ugly `clicks.cpp` file because the default `Load` accepts lambda function with no argument. So to pass arguments to it in order to decide pitch, I had to duplicated the same function for hundreds of times. Perhaps there is a better way, but at least it works.
+There is an ugly `clicks.cpp` file because the default `Load` accepts lambda function with no argument. So to pass arguments to it in order to decide pitch, I had to duplicate the same function for hundreds of times. Perhaps there is a better way, but at least it works.
 
 This game was built with [NEST](NEST.md).
