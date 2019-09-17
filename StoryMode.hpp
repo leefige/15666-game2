@@ -6,6 +6,7 @@
 
 #include "Mode.hpp"
 #include "Sound.hpp"
+#include <deque>
 
 struct StoryMode : Mode {
 	StoryMode();
@@ -15,33 +16,31 @@ struct StoryMode : Mode {
 	virtual void update(float elapsed) override;
 	virtual void draw(glm::uvec2 const &drawable_size) override;
 
-	//called to create menu for current scene:
-	void enter_scene();
+	// internal ----------------------
+	void echo(int x, int y);
+	void set_flag(int x, int y);
 
-	//------ story state -------
-	enum {
-		Dunes,
-		Oasis,
-		Hill
-	} location = Dunes;
-	bool have_stone = false;
-	bool added_stone = false;
-	struct {
-		bool first_visit = true;
-		bool wont_leave = false;
-	} dunes;
-	struct {
-		bool first_visit = true;
-		bool took_stone = false;
-	} oasis;
-	struct {
-		bool first_visit = true;
-		bool added_stone = false;
-	} hill;
-	
-	glm::vec2 view_min = glm::vec2(0,0);
+	glm::vec2 view_min = glm::vec2(0, 0);
 	glm::vec2 view_max = glm::vec2(256, 224);
 
-	//------ background music -------
-	std::shared_ptr< Sound::PlayingSample > background_music;
+	float text_height = 12;
+	float choice_height = text_height;
+
+	glm::vec2 mine_pos;
+	glm::vec2 flag_pos = glm::vec2(-1, -1);
+	std::deque<glm::vec2> explore;
+	std::deque<int> point_decay;
+	std::deque<std::shared_ptr<Sound::PlayingSample> > point_music;
+
+	const int func_cnt = 50;
+	Sound::Sample *(*funcs[50])();
+	Sound::Sample *StoryMode::get_sound_click(int x, int y);
+
+	float radius = 12;
+
+	enum {
+		pass,
+		bomb,
+		gaming
+	} game_state = gaming;
 };

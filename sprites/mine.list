@@ -1,0 +1,4 @@
+"mine.xcf?black&white" 0 0 256 224 0 0 bg
+mine.xcf?bomb 18 13 +23 +23 +13 +13 bomb
+mine.xcf?circle 97 83 +34 +34 +17 +17 point
+mine.xcf?flag 158 72 +28 +28 168 94 flag

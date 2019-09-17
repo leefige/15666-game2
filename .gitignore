@@ -14,4 +14,7 @@ sprites/pack-sprites
 sprites/pack-sprites.exe
 sprites/pack-sprites.ilk
 sprites/pack-sprites.pdb
-sprites/the-planet/
+sprites/mine/
+sprites/trade-font/
+
+.vscode/

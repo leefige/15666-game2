@@ -5,225 +5,131 @@
 #include "Load.hpp"
 #include "data_path.hpp"
 #include "gl_errors.hpp"
-#include "MenuMode.hpp"
 #include "Sound.hpp"
 
-Sprite const *sprite_left_select = nullptr;
-Sprite const *sprite_right_select = nullptr;
+#include <algorithm>
+#include <random>
 
-Sprite const *sprite_dunes_bg = nullptr;
-Sprite const *sprite_dunes_traveller = nullptr;
-Sprite const *sprite_dunes_ship = nullptr;
+Sprite const *sprite_bg = nullptr;
+Sprite const *sprite_flag = nullptr;
+Sprite const *sprite_point = nullptr;
+Sprite const *sprite_bomb = nullptr;
 
-Sprite const *sprite_oasis_bg = nullptr;
-Sprite const *sprite_oasis_traveller = nullptr;
-Sprite const *sprite_oasis_missing = nullptr;
+const std::string text_bomb = "BOMB!";
+const std::string text_pass = "PASS!";
 
-Sprite const *sprite_hill_bg = nullptr;
-Sprite const *sprite_hill_traveller = nullptr;
-Sprite const *sprite_hill_missing = nullptr;
+extern Load< Sound::Sample > sound_clicks[110];
+
+Load< Sound::Sample > sound_clonk(LoadTagDefault, []() -> Sound::Sample *{
+	std::vector< float > data(size_t(48000 * 0.2f), 0.0f);
+	for (uint32_t i = 0; i < data.size(); ++i) {
+		float t = i / float(48000);
+		//phase-modulated sine wave (creates some metal-like sound):
+		data[i] = std::sin(3.1415926f * 2.0f * 220.0f * t + std::sin(3.1415926f * 2.0f * 200.0f * t));
+		//quadratic falloff:
+		data[i] *= 0.3f * std::pow(std::max(0.0f, (1.0f - t / 0.2f)), 2.0f);
+	}
+	return new Sound::Sample(data);
+});
 
 Load< SpriteAtlas > sprites(LoadTagDefault, []() -> SpriteAtlas const * {
-	SpriteAtlas const *ret = new SpriteAtlas(data_path("the-planet"));
+	SpriteAtlas const *ret = new SpriteAtlas(data_path("mine"));
 
-	sprite_left_select = &ret->lookup("text-select-left");
-	sprite_right_select = &ret->lookup("text-select-right");
-
-	sprite_dunes_bg = &ret->lookup("dunes-bg");
-	sprite_dunes_traveller = &ret->lookup("dunes-traveller");
-	sprite_dunes_ship = &ret->lookup("dunes-ship");
-
-	sprite_oasis_bg = &ret->lookup("oasis-bg");
-	sprite_oasis_traveller = &ret->lookup("oasis-traveller");
-	sprite_oasis_missing = &ret->lookup("oasis-missing");
-
-	sprite_hill_bg = &ret->lookup("hill-bg");
-	sprite_hill_traveller = &ret->lookup("hill-traveller");
-	sprite_hill_missing = &ret->lookup("hill-missing");
+	sprite_bg = &ret->lookup("bg");
+	sprite_flag = &ret->lookup("flag");
+	sprite_point = &ret->lookup("point");
+	sprite_bomb = &ret->lookup("bomb");
 
 	return ret;
 });
 
-Load< Sound::Sample > music_cold_dunes(LoadTagDefault, []() -> Sound::Sample * {
-	return new Sound::Sample(data_path("cold-dunes.opus"));
-});
-
 StoryMode::StoryMode() {
+	mine_pos.x = float(rand() % 200 + 30);
+	mine_pos.y = float(rand() % 180 + 25);
 }
 
 StoryMode::~StoryMode() {
 }
 
-bool StoryMode::handle_event(SDL_Event const &, glm::uvec2 const &window_size) {
-	if (Mode::current.get() != this) return false;
+void StoryMode::echo(int x, int y) {
+	float gap = 10.0f * 10.0f;
+	explore.emplace_back(x, y);
+	point_decay.push_back(0);
+	glm::vec2 dif = glm::vec2(x, y) - this->mine_pos;
+    float dist_sq = dif.x * dif.x + dif.y * dif.y;
+    int level = std::min(int(dist_sq / gap), 109);
+	point_music.push_back(Sound::play(*sound_clicks[level]));
+}
 
+void StoryMode::set_flag(int x, int y) {
+	if (flag_pos.x < 0 && flag_pos.y < 0) {
+		flag_pos = glm::vec2(x, y);
+		Sound::play(*sound_clonk);
+	} else {
+		auto dif = flag_pos - glm::vec2(x,y);
+		// clean flag
+		if (dif.x * dif.x + dif.y * dif.y <= radius * radius) {
+			flag_pos = glm::vec2(-1, -1);
+			Sound::play(*sound_clonk);
+		}
+	}
+}
+
+bool StoryMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
+	if (evt.type == SDL_KEYDOWN) {
+		if (evt.key.keysym.sym == SDLK_RETURN) {
+			if (flag_pos.x >= 0 && flag_pos.y >= 0) {
+				auto dif = flag_pos - mine_pos;
+				if (dif.x * dif.x + dif.y * dif.y <= radius * radius) {
+					// success
+					game_state = pass;
+				} else {
+					game_state = bomb;
+				}
+			}
+		} else if (evt.key.keysym.sym == SDLK_ESCAPE && game_state != gaming) {
+			// restart
+			mine_pos.x = float(rand() % 200 + 30);
+			mine_pos.y = float(rand() % 180 + 25);
+			flag_pos = glm::vec2(-1, -1);
+			explore.clear();
+			point_decay.clear();
+			point_music.clear();
+			game_state = gaming;
+		}
+	} else if (evt.type == SDL_MOUSEBUTTONDOWN) {
+		// mouse pos
+        int x = int(evt.motion.x / 2);
+        int y = int(view_max.y - evt.motion.y / 2);
+
+		if (evt.button.button == SDL_BUTTON_LEFT) {
+			echo(x, y);
+		} else if (evt.button.button == SDL_BUTTON_RIGHT) {
+			set_flag(x, y);
+		}
+	}
 	return false;
 }
 
 void StoryMode::update(float elapsed) {
-	if (Mode::current.get() == this) {
-		//there is no menu displayed! Make one:
-		enter_scene();
+	int pop_cnt = 0;
+	// pop all stopped echoes
+	for (int i = 0; i < point_music.size(); i++) {
+		auto pm = point_music[i];
+		if (pm->stopped) {
+			pop_cnt++;
+		}
+		point_decay[i]++;
 	}
-
-	if (!background_music || background_music->stopped) {
-		background_music = Sound::play(*music_cold_dunes, 1.0f);
+	for (; pop_cnt > 0; pop_cnt--) {
+		point_music.pop_front();
+		point_decay.pop_front();
+		explore.pop_front();
 	}
-}
-
-void StoryMode::enter_scene() {
-	//just entered this scene, adjust flags and build menu as appropriate:
-	std::vector< MenuMode::Item > items;
-	glm::vec2 at(3.0f, view_max.y - 3.0f - 11.0f);
-	auto add_text = [&items,&at](std::string text) {
-		while (text.size()) {
-			auto end = text.find('\n');
-			items.emplace_back(text.substr(0, end), nullptr, 1.0f, glm::u8vec4(0x00, 0x00, 0x00, 0xff), nullptr, at);
-			at.y -= 13.0f;
-			if (end == std::string::npos) break;
-			text = text.substr(end+1);
-		}
-		at.y -= 4.0f;
-	};
-	auto add_choice = [&items,&at](std::string const &text, std::function< void(MenuMode::Item const &) > const &fn) {
-		items.emplace_back(text, nullptr, 1.0f, glm::u8vec4(0x00, 0x00, 0x00, 0x88), fn, at + glm::vec2(16.0f, 0.0f));
-		items.back().selected_tint = glm::u8vec4(0x00, 0x00, 0x00, 0xff);
-		at.y -= 13.0f;
-		at.y -= 4.0f;
-	};
-
-	if (location == Dunes) {
-		if (dunes.wont_leave) {
-			dunes.wont_leave = false;
-			add_text(
-				"Something remains to accomplish.\n"
-				"I won't leave."
-			);
-		}
-		if (dunes.first_visit) {
-			dunes.first_visit = false;
-			add_text(
-				"The landing is turbulent.\n"
-				"As the sand settles, I see there is\n"
-				"nobody here to meet me."
-			);
-		} else {
-			add_text(
-				"There is still nobody here to meet me."
-			);
-		}
-		at.y -= 8.0f; //gap before choices
-		add_choice("Walk West", [this](MenuMode::Item const &){
-			location = Hill;
-			Mode::current = shared_from_this();
-		});
-		add_choice("Walk East", [this](MenuMode::Item const &){
-			location = Oasis;
-			Mode::current = shared_from_this();
-		});
-		if (!dunes.first_visit) {
-			add_choice("Leave", [this](MenuMode::Item const &){
-				if (added_stone) {
-					//TODO: some sort of victory animation?
-					Mode::current = nullptr;
-				} else {
-					dunes.wont_leave = true;
-					Mode::current = shared_from_this();
-				}
-			});
-		}
-	} else if (location == Oasis) {
-		if (oasis.took_stone) {
-			oasis.took_stone = false;
-			add_text(
-				"The stone fits snugly in my pocket."
-			);
-		}
-		if (oasis.first_visit) {
-			oasis.first_visit = false;
-			add_text(
-				"I search east, walking in ever-\n"
-				"greater circles. Just over the next\n"
-				"dune, I find an oasis."
-			);
-		} else {
-			add_text(
-				"The oasis sparkles in the sunlight."
-			);
-		}
-		if (!have_stone) {
-			add_text(
-				"Sitting in the glass-clear water is a\n"
-				"single blue gemstone."
-			);
-		}
-		at.y -= 8.0f; //gap before choices
-		if (!have_stone) {
-			add_choice("Take Stone", [this](MenuMode::Item const &){
-				have_stone = true;
-				oasis.took_stone = true;
-				Mode::current = shared_from_this();
-			});
-		}
-		add_choice("Return to the Ship", [this](MenuMode::Item const &){
-			location = Dunes;
-			Mode::current = shared_from_this();
-		});
-	} else if (location == Hill) {
-		if (hill.added_stone) {
-			hill.added_stone = false;
-			add_text(
-				"I add the blue stone to the circle.\n"
-				"Something trembles deep underground."
-			);
-		}
-		if (hill.first_visit) {
-			hill.first_visit = false;
-			add_text(
-				"I set off confidently to the west.\n"
-				"At the top of the third dune, a circle\n"
-				"of stones surrounds a shallow\n"
-				"depression in the ground."
-			);
-		} else {
-			if (added_stone) {
-				add_text(
-					"The circle of stones stands silently."
-				);
-			} else {
-				add_text(
-					"The circle of stones stands\n"
-					"expectantly."
-				);
-			}
-		}
-		at.y -= 8.0f; //gap before choices
-		if (have_stone && !added_stone) {
-			add_choice("Add Blue Stone", [this](MenuMode::Item const &){
-				added_stone = true;
-				hill.added_stone = true;
-				Mode::current = shared_from_this();
-			});
-		}
-		add_choice("Return to the Ship", [this](MenuMode::Item const &){
-			location = Dunes;
-			Mode::current = shared_from_this();
-		});
-	}
-	std::shared_ptr< MenuMode > menu = std::make_shared< MenuMode >(items);
-	menu->atlas = sprites;
-	menu->left_select = sprite_left_select;
-	menu->right_select = sprite_right_select;
-	menu->select_bounce_amount = 4.0f;
-	menu->left_select_tint = glm::u8vec4(0x00, 0x00, 0x00, 0xff);
-	menu->right_select_tint = glm::u8vec4(0x00, 0x00, 0x00, 0xff);
-	menu->view_min = view_min;
-	menu->view_max = view_max;
-	menu->background = shared_from_this();
-	Mode::current = menu;
 }
 
 void StoryMode::draw(glm::uvec2 const &drawable_size) {
+	
 	//clear the color buffer:
 	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
@@ -235,25 +141,33 @@ void StoryMode::draw(glm::uvec2 const &drawable_size) {
 	glDisable(GL_DEPTH_TEST);
 
 	{ //use a DrawSprites to do the drawing:
+		glm::vec2 at(30.0f, view_max.y - 60.0f);
 		DrawSprites draw(*sprites, view_min, view_max, drawable_size, DrawSprites::AlignPixelPerfect);
 		glm::vec2 ul = glm::vec2(view_min.x, view_max.y);
-		if (location == Dunes) {
-			draw.draw(*sprite_dunes_bg, ul);
-			draw.draw(*sprite_dunes_ship, ul);
-			draw.draw(*sprite_dunes_traveller, ul);
-		} else if (location == Oasis) {
-			draw.draw(*sprite_oasis_bg, ul);
-			if (!have_stone) {
-				draw.draw(*sprite_oasis_missing, ul);
-			}
-			draw.draw(*sprite_oasis_traveller, ul);
 
-		} else if (location == Hill) {
-			draw.draw(*sprite_hill_bg, ul);
-			if (added_stone) {
-				draw.draw(*sprite_hill_missing, ul);
-			}
-			draw.draw(*sprite_hill_traveller, ul);
+		draw.draw(*sprite_bg, ul);
+
+		// draw echoes
+		for (int i = 0; i < explore.size(); i++) {
+			auto echo = explore[i];
+			draw.draw(*sprite_point, echo, 1.0f, glm::u8vec4(0xff, 0xff, 0xff, 0xff * std::pow(0.9, point_decay[i])));
+		}
+
+		// draw flag
+		if (flag_pos.x > 0 && flag_pos.y > 0) {
+			draw.draw(*sprite_flag, flag_pos);
+		}
+
+		// draw results
+		if (game_state == bomb) {
+			draw.draw_text(
+				text_bomb, at, 5, glm::u8vec4(0x99, 0x11, 0x11, 0xff)
+			);
+			draw.draw(*sprite_bomb, mine_pos);
+		} else if (game_state == pass) {
+			draw.draw_text(
+				text_pass, at, 5, glm::u8vec4(0x11, 0x99, 0x11, 0xff)
+			);
 		}
 	}
 	GL_ERRORS(); //did the DrawSprites do something wrong?

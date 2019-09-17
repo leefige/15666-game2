@@ -192,8 +192,9 @@ void DrawSprites::draw_text(std::string const &text, glm::vec2 const &anchor, fl
 	glm::vec2 moving_anchor = anchor;
 	for (size_t pos = 0; pos < text.size(); pos++){
 		Sprite const &chr = atlas.lookup(text.substr(pos,1));
-		draw(chr, moving_anchor, scale, tint);
-		moving_anchor.x += (chr.max_px.x - chr.min_px.x + 1) * scale;
+		float &&drift_y = chr.max_px.y - chr.anchor_px.y;
+		draw(chr, glm::vec2(moving_anchor.x, moving_anchor.y - drift_y * scale), scale, tint);
+		moving_anchor.x += (chr.max_px.x - chr.anchor_px.x + text_space) * scale;
 	}
 
 	if (anchor_out) {
@@ -215,7 +216,7 @@ void DrawSprites::get_text_extents(std::string const &text, glm::vec2 const &anc
 		Sprite const &chr = atlas.lookup(text.substr(pos,1));
 		min = glm::min(min, moving_anchor + (chr.min_px - chr.anchor_px) * scale);
 		max = glm::max(max, moving_anchor + (chr.max_px - chr.anchor_px) * scale);
-		moving_anchor.x += (chr.max_px.x - chr.min_px.x + 1) * scale;
+		moving_anchor.x += (chr.max_px.x - chr.anchor_px.x + text_space) * scale;
 	}
 }
 

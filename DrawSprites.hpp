@@ -43,6 +43,8 @@ struct DrawSprites {
 	glm::uvec2 drawable_size;
 	AlignMode mode;
 	glm::mat4 to_clip;
+	
+	const float text_space = .5f;
 
 	struct Vertex {
 		Vertex(glm::vec2 const &Position_, glm::vec2 const &TexCoord_, glm::u8vec4 const &Color_) : Position(Position_), TexCoord(TexCoord_), Color(Color_) { }
